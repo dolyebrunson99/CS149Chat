@@ -9,7 +9,7 @@ export void MM2d_v(uniform float A[], uniform bool transA,
      */
 
     uniform unsigned int a_i_stride, a_k_stride, b_j_stride, b_k_stride;
-    uniform float sumTile[TILE_SIZE], oneAVal;
+    uniform float oneAVal;
 
     if (transA) {
         a_i_stride = 1;
@@ -27,22 +27,15 @@ export void MM2d_v(uniform float A[], uniform bool transA,
         b_k_stride = N;
     }
 
-    for (uniform unsigned int i = 0; i < M; i++) {
-        for (uniform unsigned int j = 0; j < N; j+=TILE_SIZE) {
-            foreach (ji = 0 ... TILE_SIZE)
-                sumTile[ji] = 0.0f;
-
-            for (uniform unsigned int k = 0; k < P; k++) {
-                oneAVal = A[i * a_i_stride + k * a_k_stride];
-                foreach (ji = 0 ... TILE_SIZE) {
-                    #pragma ignore warning(perf)
-                    varying float matB = B[(j + ji) * b_j_stride + k * b_k_stride];
-                    sumTile[ji] += oneAVal * matB;
+    for (uniform unsigned int k = 0; k < P; k++) {
+        for (uniform unsigned int j = 0; j < N; j+=TILE_SIZE) {        
+            foreach (ji = 0 ... TILE_SIZE) {
+                varying float matB = B[(j + ji) * b_j_stride + k * b_k_stride];
+                for (uniform unsigned int i = 0; i < M; i++) {
+                    oneAVal = A[i * a_i_stride + k * a_k_stride];
+                    C[i * N + j + ji] += oneAVal * matB;
                 }
             }
-
-            foreach (ji = 0 ... TILE_SIZE)
-                C[i * N + j + ji] += sumTile[ji];
         }
     }
 }
