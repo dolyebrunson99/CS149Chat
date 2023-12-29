@@ -5,13 +5,15 @@
 #include <sys/time.h>
 #include <vector>
 #include <immintrin.h>
+#include <numeric>
+#include <cmath>
 
 // Uncomment for ISPC
-//#include "module_ispc.h"
-//using namespace ispc;
+#include "module_ispc.h"
+using namespace ispc;
 
 // ------------------------------------ //
-// 	WARM-UP: ACCESSING TENSORS      //
+// 	WARM-UP: ACCESSING TENSORS          //
 // ------------------------------------ //
 
 // Step #1: Understand Read/Write Accessors for a 2D Tensor
@@ -27,12 +29,12 @@ inline void twoDimWrite(std::vector<float> &tensor, int &x, int &y, const int &s
 // Step #2: Implement Read/Write Accessors for a 4D Tensor
 inline float fourDimRead(std::vector<float> &tensor, int &x, int &y, int &z, int &b, 
         const int &sizeX, const int &sizeY, const int &sizeZ) {
-    return 0.0;
+    return tensor[x * (sizeX * sizeY * sizeZ) + y * (sizeY * sizeZ) + z * (sizeZ) + b];
 }
 
 inline void fourDimWrite(std::vector<float> &tensor, int &x, int &y, int &z, int &b, 
         const int &sizeX, const int &sizeY, const int &sizeZ, float &val) {
-    return; 
+    tensor[x * (sizeX * sizeY * sizeZ) + y * (sizeY * sizeZ) + z * (sizeZ) + b] = val;
 }
 
 // DO NOT EDIT THIS FUNCTION //
@@ -64,7 +66,7 @@ std::vector<float> formatTensor(torch::Tensor tensor) {
  *
  * d (Embedding Dimensionality) - The number of features each token encodes per attention head. Let's
  * say I encoded a word using the follow (length, number of vowels, has a capital letters). The
- * emvedded dimensionaliy would be 3.
+ * embedded dimensionaliy would be 3.
  * */
 
 // ---------------------------------------------------------- //
@@ -113,7 +115,7 @@ torch::Tensor myNaiveAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
 
     /* Here is an example of how to read/write 0's to  QK_t (N, N) using the 2D accessors
 
-           for (int i = 0; i < N; i++) {
+         for (int i = 0; i < N; i++) {
 	       for (int j = 0; j < N; j++) {
 	           float val = twoDimRead(QK_t, i, j, N);
                val = 0.0;
@@ -121,9 +123,40 @@ torch::Tensor myNaiveAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
              }
          }
     */
-    
     // -------- YOUR CODE HERE  -------- //
-    
+    for (int b = 0; b < B; b++) {
+        for (int h = 0; h < H; h++) {
+            // QK_t = Q @ K.T = (B, H, N, d) @ (B, H, d, N) = (B, H, N, N)
+            for (int i0 = 0; i0 < N; i0++) {
+                for (int i1 = 0; i1 < N; i1++) {
+                    float QK_t_i0i1 = 0.0;
+                    for (int j = 0; j < d; j++) 
+                        QK_t_i0i1 += fourDimRead(Q, b, h, i0, j, H, N, d) * fourDimRead(K, b, h, i1, j, H, N, d);
+                    twoDimWrite(QK_t, i0, i1, N, QK_t_i0i1);
+                }
+                float rowSum = 0.0;
+                for (int i1 = 0; i1 < N; i1++)
+                    rowSum += exp(twoDimRead(QK_t, i0, i1, N));
+
+                for (int i1 = 0; i1 < N; i1++) {
+                    float QK_t_i0i1 = exp(twoDimRead(QK_t, i0, i1, N));
+                    QK_t_i0i1 /= rowSum;
+                    twoDimWrite(QK_t, i0, i1, N, QK_t_i0i1);
+                }
+            }
+            // O = QK_t @ V = (B, H, N, N) @ (B, H, N, d) -> (B, H, N, d)
+            for (int i0 = 0; i0 < N; i0++) {
+                for (int j = 0; j < d; j++) {
+                    float O_bhi0j = 0.0;
+                    for (int i1 = 0; i1 < N; i1++)
+                        O_bhi0j += twoDimRead(QK_t, i0, i1, N) * fourDimRead(V, b, h, i1, j, H, N, d);
+                    
+                    fourDimWrite(O, b, h, i0, j, H, N, d, O_bhi0j);
+                }
+            }
+        }
+    }
+
     // DO NOT EDIT THIS RETURN STATEMENT //
     // It formats your C++ Vector O back into a Tensor of Shape (B, H, N, d) and returns it //
     return torch::from_blob(O.data(), {B, H, N, d}, torch::TensorOptions().dtype(torch::kFloat32)).clone();
@@ -153,6 +186,47 @@ torch::Tensor myUnfusedAttentionBlocked(torch::Tensor QTensor, torch::Tensor KTe
     std::vector<float> QK_t = formatTensor(QK_tTensor);
 
     // -------- YOUR CODE HERE  -------- //
+#define BLOCK_SIZE 128
+    for (int b = 0; b < B; b++) {
+        for (int h = 0; h < H; h++) {
+            for (int i0 = 0; i0 < N; i0+=BLOCK_SIZE) {
+                for (int i1 = 0; i1 < N; i1+=BLOCK_SIZE) {
+                    for (int j = 0; j < d; j++) {
+                        for (int i0_0 = i0; i0_0 < std::min(i0+BLOCK_SIZE, N); i0_0++) {
+                            for (int i1_0 = i1; i1_0 < std::min(i1+BLOCK_SIZE, N); i1_0++) {
+                                float QK_t_i0_0i1_0 = twoDimRead(QK_t, i0_0, i1_0, N);
+                                QK_t_i0_0i1_0 += fourDimRead(Q, b, h, i0_0, j, H, N, d) * fourDimRead(K, b, h, i1_0, j, H, N, d);
+                                twoDimWrite(QK_t, i0_0, i1_0, N, QK_t_i0_0i1_0);
+                            }
+                        }
+                    }
+                }
+            }
+            for (int i0 = 0; i0 < N; i0++) {
+                float rowSum = 0.0;
+                for (int i1 = 0; i1 < N; i1++)
+                    rowSum += exp(twoDimRead(QK_t, i0, i1, N));
+                for (int i1 = 0; i1 < N; i1++) {
+                    float QK_t_i0i1 = exp(twoDimRead(QK_t, i0, i1, N));
+                    QK_t_i0i1 /= rowSum;
+                    twoDimWrite(QK_t, i0, i1, N, QK_t_i0i1);
+                }
+            }
+            for (int i0 = 0; i0 < N; i0+=BLOCK_SIZE) {
+                for (int j = 0; j < d; j+=BLOCK_SIZE) {
+                    for (int i1 = 0; i1 < N; i1++) {
+                        for (int i0_0 = i0; i0_0 < std::min(i0+BLOCK_SIZE, N); i0_0++) {
+                            for (int j_0 = j; j_0 < std::min(j+BLOCK_SIZE, d); j_0++) {
+                                float O_bhi0_0j_0 = fourDimRead(O, b, h, i0_0, j_0, H, N, d);
+                                O_bhi0_0j_0 += twoDimRead(QK_t, i0_0, i1, N) * fourDimRead(V, b, h, i1, j_0, H, N, d);
+                                fourDimWrite(O, b, h, i0_0, j_0, H, N, d, O_bhi0_0j_0);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // DO NOT EDIT THIS RETURN STATEMENT //
     // It formats your C++ Vector O back into a Tensor of Shape (B, H, N, d) and returns it //
@@ -182,26 +256,38 @@ torch::Tensor myFusedAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
     
     //Format ORow Tensor into a 1D vector
     // You can simply access this as ORow[i]
-    std::vector<float> ORow = formatTensor(ORowTensor);
+    // std::vector<float> ORow = formatTensor(ORowTensor);
 
 
     // -------- YOUR CODE HERE  -------- //
-    // We give you a template of the first three loops for your convenience
-    //loop over batch
-    for (int b = 0; b < B; b++){
-
-        //loop over heads
-        for (int h = 0; h < H; h++){
-            for (int i = 0; i < N ; i++){
-
+#pragma omp parallel for collapse(3)
+    for (int b = 0; b < B; b++) {
+        for (int h = 0; h < H; h++) {
+            for (int i0 = 0; i0 < N; i0++) { // Q[i0] is a single row of Q
 		// YRow is moved inside so each OpenMP thread gets a local copy.
                 at::Tensor ORowTensor = temp.index({torch::indexing::Slice(omp_get_thread_num(), torch::indexing::None)});      
-                std::vector<float> ORow = formatTensor(ORowTensor);
-		//YOUR CODE HERE
+                std::vector<float> ORow = formatTensor(ORowTensor); // ORow.shape = N
+		// YOUR CODE HERE
+                for (int i1 = 0; i1 < N; i1++)
+                    for (int j = 0; j < d; j++)
+                        ORow[i1] += fourDimRead(Q, b, h, i0, j, H, N, d) * fourDimRead(K, b, h, i1, j, H, N, d);
+
+                for (int i1 = 0; i1 < N; i1++)
+                    ORow[i1] = exp(ORow[i1]);
+
+                float rowSum = std::accumulate(ORow.begin(), ORow.end(), 0.0f);
+                std::transform(ORow.begin(), ORow.end(), ORow.begin(), [rowSum](float x) { return x / rowSum; });
+
+                for (int j = 0; j < d; j++) {
+                    float O_bhi0j = 0.0f;
+                    for (int i1 = 0; i1 < N; i1++) 
+                        O_bhi0j += ORow[i1] * fourDimRead(V, b, h, i1, j, H, N, d);
+                    fourDimWrite(O, b, h, i0, j, H, N, d, O_bhi0j);
+                }
             }
-	}
+	    }
     }
-	    
+
 	
     // DO NOT EDIT THIS RETURN STATEMENT //
     // It formats your C++ Vector O back into a Tensor of Shape (B, H, N, d) and returns it //
@@ -212,6 +298,36 @@ torch::Tensor myFusedAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
 // ---------------------------------------------------------- //
 //                PART 4: FLASH ATTENTION 		      //
 // ---------------------------------------------------------- //
+
+void MM2d(std::vector<float> &A, bool transA, std::vector<float> &B, bool transB, 
+          std::vector<float> &C, int M, int N, int P) {
+    // credit to https://github.com/google/gemmlowp/blob/master/test/test.cc#L35
+    int a_i_stride, a_k_stride;
+    if (transA) {
+        a_i_stride = 1;
+        a_k_stride = M;
+    } else {
+        a_i_stride = P;
+        a_k_stride = 1;
+    }
+    int b_j_stride, b_k_stride;
+    if (transB) {
+        b_j_stride = P;
+        b_k_stride = 1;
+    } else {
+        b_j_stride = 1;
+        b_k_stride = N;
+    }
+    
+    for (int k = 0; k < P; k++)
+        for (int i = 0; i < M; i++)
+            for (int j = 0; j < N; j++) {
+                const int a_index = i * a_i_stride + k * a_k_stride;
+                const int b_index = j * b_j_stride + k * b_k_stride;
+                float val = twoDimRead(C, i, j, N) + A[a_index] * B[b_index];
+                twoDimWrite(C, i, j, N, val);
+            }
+}
 
 torch::Tensor myFlashAttention(torch::Tensor QTensor, torch::Tensor KTensor, torch::Tensor VTensor,
                torch::Tensor QiTensor, torch::Tensor KjTensor, torch::Tensor VjTensor,
@@ -235,25 +351,92 @@ torch::Tensor myFlashAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
     std::vector<float> Q = formatTensor(QTensor);
     std::vector<float> K = formatTensor(KTensor);
     std::vector<float> V = formatTensor(VTensor);
-    std::vector<float> Sij = formatTensor(SijTensor);
-    std::vector<float> Pij = formatTensor(PijTensor);
-    std::vector<float> Kj = formatTensor(KjTensor);
-    std::vector<float> Vj = formatTensor(VjTensor);
-    std::vector<float> Qi = formatTensor(QiTensor);
-    std::vector<float> Oi = formatTensor(OiTensor);
-    std::vector<float> l = formatTensor(LTensor);
-    std::vector<float> PV = formatTensor(PVTensor);
-    std::vector<float> li = formatTensor(LiTensor);
-    std::vector<float> lij = formatTensor(LijTensor);
-    std::vector<float> lnew = formatTensor(LnewTensor);
 
     // -------- YOUR CODE HERE  -------- //
+#pragma omp parallel for collapse(3)
+    for (int b = 0; b < B; b++) {
+        for (int h = 0; h < H; h++) {
+            for (int i0 = 0; i0 < N; i0+=Br) {
+                int _Br = std::min(Br, N - i0);
+                // load a tile from Q to Qi
+                auto Qtile = QTensor.index({b, h, torch::indexing::Slice(i0, i0 + _Br)});
+                std::vector<float> Qi = formatTensor(Qtile);        // (Br, d)
+
+                // allocate buffers for Oi, li
+                std::vector<float> Oi = formatTensor(OiTensor);     // (Br, d)
+                std::vector<float> li = formatTensor(LiTensor);     // (Br)
+
+                std::vector<float> Kj;    // (Bc, d)
+                std::vector<float> Vj;    // (Bc, d)
+
+                for (int i1 = 0; i1 < N; i1+=Bc) {
+                    int _Bc = std::min(Bc, N - i1);
+                    // load a tile from K and V
+                    auto Ktile = KTensor.index({b, h, torch::indexing::Slice(i1, i1 + _Bc)});
+                    auto Vtile = VTensor.index({b, h, torch::indexing::Slice(i1, i1 + _Bc)});
+                    Kj = formatTensor(Ktile);    // (Bc, d)
+                    Vj = formatTensor(Vtile);    // (Bc, d)
+
+                    // allocate buffers for Sij, Pij, lij, lnew
+                    std::vector<float> Sij = formatTensor(SijTensor);   // (Br, Bc)
+                    std::vector<float> Pij = formatTensor(PijTensor);   // (Br, Bc)
+                    std::vector<float> lij = formatTensor(LijTensor);   // (Br)
+                    std::vector<float> lnew = formatTensor(LnewTensor); // (Br)
+                    
+                    // Sij = QiKj_T
+                    MM2d_v(Qi.data(), /*transA=*/false, 
+                           Kj.data(), /*transB=*/true, 
+                           Sij.data(), _Br, _Bc, d);
+
+                    // Pij = exp(Sij)
+                    for (int ir = 0; ir < _Br; ir++)
+                        for (int ic = 0; ic < _Bc; ic++) {
+                            float s = exp(twoDimRead(Sij, ir, ic, _Bc));
+                            twoDimWrite(Pij, ir, ic, _Bc, s);
+                        }      
+                
+                    // lij = rowSum(Pij)
+                    for (int ir = 0; ir < _Br; ir++) {
+                        std::vector<float> row(Pij.begin() + ir * _Bc, Pij.begin() + ir * _Bc + _Bc);
+                        lij[ir] = rowSum_v(row.data(), _Bc);
+                    }
+                        
+
+                    // lnew = li + lij
+                    for (int ir = 0; ir < _Br; ir++)
+                        lnew[ir] = li[ir] + lij[ir];
+                    
+                    // Oi = (liOi + PijVj) / lnew
+                    for (int ir = 0; ir < _Br; ir++)
+                        for (int j = 0; j < d; j++) {
+                            float oi = li[ir] * twoDimRead(Oi, ir, j, d);
+                            twoDimWrite(Oi, ir, j, d, oi);
+                        }
+                    
+                    MM2d_v(Pij.data(), /*transA=*/false, 
+                           Vj.data(), /*transB=*/false, 
+                           Oi.data(), _Br, d, _Bc);
+                    
+                    for (int ir = 0; ir < _Br; ir++)
+                        for (int j = 0; j < d; j++) {
+                            float oi = twoDimRead(Oi, ir, j, d) / lnew[ir];
+                            twoDimWrite(Oi, ir, j, d, oi);
+                        }
+
+                    li = lnew;  // update li
+                }
+
+                // write Oi to memory
+                int offset = b * H * N * d + h * N * d + i0 * d;
+                std::copy(Oi.begin(), Oi.begin() + _Br*d, O.begin() + offset);
+            }
+        }
+    }
 
     // DO NOT EDIT THIS RETURN STATEMENT //
     // It formats your C++ Vector O back into a Tensor of Shape (B, H, N, d) and returns it //
     return torch::from_blob(O.data(), {B, H, N, d}, torch::TensorOptions().dtype(torch::kFloat32)).clone();
 }
-
 
 /* DO NOT EDIT THESE BINDINGS */
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {

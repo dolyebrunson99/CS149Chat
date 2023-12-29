@@ -11,7 +11,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 from torch.utils.cpp_extension import load
 from torch.profiler import profile, record_function, ProfilerActivity
-import module_ref as ms
+# import module_ref as ms
 
 NUM_THREADS=8
 torch.set_num_threads(NUM_THREADS)
@@ -45,8 +45,7 @@ class CustomAttention(nn.Module):
                 out = mr.myNaiveAttention(self.Q, self.K, self.V, temp, self.B, self.H, self.N, self.d)
             return out
         with record_function("REFERENCE - NAIVE ATTENTION"):
-            temp = torch.zeros((self.N, self.N))
-            out = ms.myNaiveAttention(self.Q, self.K, self.V, temp, self.B, self.H, self.N, self.d)
+            out = badSoftmax(self.Q, self.K, self.V)
         return out
 
     #part 2
@@ -57,8 +56,7 @@ class CustomAttention(nn.Module):
                 out = mr.myUnfusedAttentionBlocked(self.Q, self.K, self.V, temp, self.B, self.H, self.N, self.d)
             return out 
         with record_function("REFERENCE - BLOCKED MATMUL + UNFUSED SOFTMAX"):
-            temp = torch.zeros((self.N, self.N))
-            out = ms.myUnfusedAttentionBlocked(self.Q, self.K, self.V, temp, self.B, self.H, self.N, self.d)
+            out = badSoftmax(self.Q, self.K, self.V)
         return out
 
     #part 3
@@ -69,8 +67,7 @@ class CustomAttention(nn.Module):
                 out = mr.myFusedAttention(self.Q, self.K, self.V, temp, self.B, self.H, self.N, self.d)
             return out
         with record_function("REFERENCE - FUSED ATTENTION"):
-            temp = torch.zeros((NUM_THREADS, self.N))
-            out = ms.myFusedAttention(self.Q, self.K, self.V, temp, self.B, self.H, self.N, self.d)
+            out = badSoftmax(self.Q, self.K, self.V)
         return out
 
     #part 4
@@ -93,8 +90,7 @@ class CustomAttention(nn.Module):
                 out = mr.myFlashAttention(self.Q, self.K, self.V, Qi, Kj, Vj, Sij, Pij, PV, Oi, L, Li, Lij, Lnew, self.bc, self.br, self.B, self.H, self.N, self.d)
             return out
         with record_function("REFERENCE - FLASH ATTENTION"):
-            #out = ms.myFlashAttention(self.Q, self.K, self.V, self.B, self.H, self.N, self.d, self.blockSize)
-            out = ms.myFlashAttention(self.Q, self.K, self.V, Qi, Kj, Vj, Sij, Pij, PV, Oi, L, Li, Lij, Lnew, self.bc, self.br, self.B, self.H, self.N, self.d)
+            out = badSoftmax(self.Q, self.K, self.V)
         return out
 
 # generates dummy matrices for use in part0 
