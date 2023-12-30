@@ -1,8 +1,4 @@
-# Assignment 4: NanoGPT149
-
-**Due Monday Dec 4, 11:59pm PST**
-
-**100 points total + 12 Points EC**
+NanoGPT149
 
 ## Overview 
 
@@ -119,13 +115,6 @@ When running the test, if you have implemented your accessors correctly, the exp
     Expected: 0.0006
     Result: 0.0006
 
-### What to submit
-
-* Implement `fourDimRead` and `fourDimWrite` in the file `module.cpp`.
-
-* Next, answer the following question in your writeup:
-  * Briefly describe how a 4D tensor/array is laid out in memory. Why do you think this convention was chosen and how does it leverage hardware?
-
 ## Part 1: A Simple (But Not So Efficient) Implementation of Attention (10 Points)
 
 Now that you have your accessors, it's time to start working on your custom attention layer. As the first step in this assignment, you will be implementing a serial attention layer in C++ with no optimizations. In `myNaiveAttention`, we have provided you with two examples. The first demonstrates how to fill a 4D tensor with 0's and the second demonstrates how to fill a 2D tensor with 0's. Extend these concepts such that you are able to implement attention. You should:
@@ -202,10 +191,6 @@ If you have implemented your attention layer, you can also see the DNN use your 
 
 Note that you will not be autograded on inference, and this is purely for fun. Please also note that the models `shakes1024` and `shakes2048` will not work with the softmax we describe in this writeup due to overflow errors. If you wish to have them work, you must implement the "safe" softmax described in class. This is completely optional as we will always make sure to give you nice values when grading. Parts 1-3 all follow the same grading procedure listed here in this section.
 
-### What to submit
-
-* Implement `myNaiveAttention` in `module.cpp`.
-
 ## Part 2: Blocked Matrix Multiply and Unfused Softmax (20 Points)
 Now that we have our baseline matrix multiply, let's see how we can optimize it. Currently, our matrix multiply behaves as follows:
 
@@ -259,13 +244,6 @@ You can see the DNN use your attention layer to generate text, optionally changi
     python3 gpt149.py part2 --inference -m shakes128
 
 Note that you will not be autograded on inference, and this is purely for fun. Please also note that the models `shakes1024` and `shakes2048` will not work with the softmax we describe in this writeup due to overflow errors. If you wish to have them work, you must implement the "safe" softmax described in class. This is completely optional as we will always make sure to give you nice values when grading.
-
-### What to submit
-* Implement `myUnfusedAttentionBlocked` in `module.cpp`.
-
-* Then, answer the following questions in your writeup:
-  * Share us some data about what tile sizes you tried when N=1024, and what the performance times were for each.  What was the optimal tile size for your matrix multiplications? Explain why you think this tile size worked best for your implementation. There really isn't a wrong answer here, we just want to see that you experimented and tried to form conclusions.
-  * For a matrix multiply of $Q$ (Nxd) and $K^{T}$ (dxN), what is the ratio of DRAM accesses in Part 2 versus DRAM acceses in Part 1? (assume 4 byte float primitives, 64 byte cache lines, as well as N and d are very large).
 
 ## Part 3: Fused Attention (25 Points)
 By now we've seen that multiplying $Q * K^{T}$ results in a massive NxN matrix. Doing the matrix multiplies and softmax in seperate functions requies that we write each row of our NxN matrix, and then do another pass over this NxN matrix in the subsequent softmax, and then do a third pass over the softmax'd matrix when multipling it by V. Not only is this bad for cache performance, but it is very bad for our program's memory footprint. 
@@ -325,13 +303,6 @@ Now, you can see the DNN use your attention layer to generate text, optionally c
     python3 gpt149.py part3 --inference -m shakes128
 
 Note that you will not be autograded on inference, and this is purely for fun. Please also note that the models `shakes1024` and `shakes2048` will not work with the softmax we describe in this writeup due to overflow errors. If you wish to have them work, you must implement the "safe" softmax described in class. This is completely optional as we will always make sure to give you nice values when grading.
-
-### What to submit
-* Implement `myFusedAttention` in `module.cpp`.
-
-* Then, answer the following question in your writeup:
-  * Why do we use a drastically smaller amount of memory in Part 3 when compared to Parts 1 & 2?
-  * Comment out your `#pragma omp ...` statement, what happens to your cpu time? Record the cpu time in your writeup. Why does fused attention make it easier for us utilize multithreading to a much fuller extent when compared to Part 1?
 
 ## Part 4 : Putting it all Together - Flash Attention (35 Points)
 ### Why Are Matrix Multiply and Softmax Hard to Fuse as Blocks?
@@ -401,49 +372,7 @@ Now, you can see the DNN use your attention layer to generate text, optionally c
 
 Note that you will not be autograded on inference, and this is purely for fun. Please also note that the models `shakes1024` and `shakes2048` will not work with the softmax we describe in this writeup due to overflow errors. If you wish to have them work, you must implement the "safe" softmax described in class. This is completely optional as we will always make sure to give you nice values when grading.
 
-### What to submit
-* Implement `myFlashAttention` in `module.cpp`. 
-
-* Then, answer the following question in your writeup:
-  * How does the memory usage of Part 4 compare to that of the previous parts? Why is this the case?
-  * Notice that the performance of Part 4 is slower than that of the previous parts. Have we fully optimized Part 4? What other performance improvements can be done? Please list them and describe why they would increase performance.
-
-## Extra Credit: Optimize Further (12 Total Points - 3 Points Per Part)
-
 ### Vectorize with ISPC Intrinsics
 You may notice that there are many looped-based nondivergent floating point operations. This is a great place to use vector intrinsics! We have provided ISPC support for you to write you own vectorized functions for things such as matrix multiplication and row sum. The repo contains a file titled `module.ispc`. Feel free to write your own ISPC functions in here, and compile them with the command:
 
      ispc -O3 --target=avx2-i32x8 --arch=x86-64 --pic module.ispc -h module_ispc.h -o module_ispc.o 
-     
-To enable them in your `module.cpp` file, all you need to simply uncomment the following two lines at the top of the file:
-
-    #include "module_ispc.h"
-    using namespace ispc;
-
-### Write-Up Question
-* Please record your speedups with vectorization and your implementations in `writeup.pdf.`
-
-## Point BreakDown: (100 Total Points + 12 Possible Extra Credit)
-* Implement `fourDimRead`: 1.5 Points
-* Implement `fourDimWrite`: 1.5 Points
-* Implement `myNaiveAttention`: 10 Points
-* Implement `myUnfusedAttentionBlocked`: 20 Points
-* Implement `myFusedAttention`: 25 Points
-* Implement `myFlashAttention`: 35 Points
-* Answer Writeup Questions: 7 Points
-  * 1 Warm-Up Question
-  * 2 Part 2 Questions
-  * 2 Part 3 Questions
-  * 2 Part 4 Questions
-* Extra Credit: Vectorize Parts 1-4: 3 Points Per Part
-
-## Hand-in Instructions
-Please submit your work using [Gradescope](https://www.gradescope.com/). If you are working with a partner please remember to tag your partner on gradescope.
-
-Please submit your writeup questions in a file `writeup.pdf`. REMEMBER to map the pages to questions on gradescope. If you did the extra credit, please state so at the end of your writeup as we will manually run these. In addition, please record the performance numbers we should expect for each part that you sped up using vectorization.
-
-* Please submit the following files to Assignment 4 (Code):
-  * module.cpp
-  * module.ispc (if you attempted the extra credit)
-    
-* Please submit your writeup in a file called `writeup.pdf` to Assignment 4 (Write-Up).
